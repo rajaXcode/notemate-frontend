@@ -11,13 +11,13 @@ function NameModal({ title, hint, label, ph, onSubmit, onClose }) {
     <Modal onClose={onClose}>
       <h2 className="text-xl font-bold text-brand-deep">{title}</h2>
       <p className="text-sm text-brand-mut mt-1 mb-4">{hint}</p>
-      <input 
-        autoFocus 
-        value={v} 
-        onChange={e => setV(e.target.value)} 
-        placeholder={ph} 
+      <input
+        autoFocus
+        value={v}
+        onChange={e => setV(e.target.value)}
+        placeholder={ph}
         onKeyDown={e => e.key === 'Enter' && onSubmit(v.trim())}
-        className="w-full px-4 py-3 rounded-xl border border-brand-line bg-white text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-teal text-sm" 
+        className="w-full px-4 py-3 rounded-xl border border-brand-line bg-white text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-teal text-sm"
       />
       <div className="flex justify-end gap-2 mt-6">
         <button onClick={onClose} className="px-4 py-2.5 rounded-xl border border-brand-line text-brand-mut hover:bg-brand-bg text-sm font-medium transition">Cancel</button>
@@ -30,14 +30,23 @@ function NameModal({ title, hint, label, ph, onSubmit, onClose }) {
 export default function Dashboard() {
   const { subjectId } = useParams(), nav = useNavigate(), { user, logout } = useAuth();
   const [subs, setSubs] = useState(null), [sess, setSess] = useState([]), [modal, setModal] = useState(null), [menu, setMenu] = useState(false);
-  
+
   const loadSubs = useCallback(() => api('/api/subjects').then(d => setSubs(d.data)).catch(e => toast(e.message)), []);
-  useEffect(() => { loadSubs() }, [loadSubs, subjectId]);
-  useEffect(() => { 
-    setSess([]); 
-    setMenu(false); 
-    if (subjectId) api(`/api/subjects/${subjectId}/sessions`).then(d => setSess(d.data)).catch(e => toast(e.message)) 
+
+  const loadSessions = useCallback(() => {
+    if (subjectId) {
+      api(`/api/subjects/${subjectId}/sessions`).then(d => setSess(d.data)).catch(e => toast(e.message));
+    } else {
+      setSess([]);
+    }
   }, [subjectId]);
+
+  useEffect(() => { loadSubs() }, [loadSubs, subjectId]);
+  useEffect(() => {
+    setSess([]);
+    setMenu(false);
+    loadSessions();
+  }, [subjectId, loadSessions]);
 
   if (!subs) return <Spin />;
   const cur = subs.find(s => s.id === subjectId);
@@ -59,8 +68,8 @@ export default function Dashboard() {
     } catch (e) { toast(e.message) }
   };
 
-  const del = async (e, id) => {
-    e.preventDefault(); 
+  const delProject = async (e, id) => {
+    e.preventDefault();
     e.stopPropagation();
     if (!confirm('Delete this project with all its lectures, notes and transcripts?')) return;
     try {
@@ -68,6 +77,20 @@ export default function Dashboard() {
       await loadSubs();
       if (id === subjectId) nav('/app');
     } catch (x) { toast(x.message) }
+  };
+
+  const delSession = async (e, sessionId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm('Delete this lecture session with all its notes and transcripts?')) return;
+    try {
+      await api(`/api/subjects/sessions/${sessionId}`, { method: 'DELETE' });
+      toast('Lecture deleted successfully');
+      loadSessions();
+      await loadSubs(); // refresh subject counts
+    } catch (x) {
+      toast(x.message);
+    }
   };
 
   return (
@@ -89,7 +112,7 @@ export default function Dashboard() {
               <BookOpen className="w-4 h-4 shrink-0 text-brand-mark" />
               <span className="truncate flex-1">{s.name}</span>
               <span className="bg-white/25 text-white text-xs px-2 py-0.5 rounded-full">{s._count.sessions}</span>
-              <button title="Delete project" onClick={e => del(e, s.id)} className="text-white/40 hover:text-brand-coral p-1 transition">
+              <button title="Delete project" onClick={e => delProject(e, s.id)} className="text-white/40 hover:text-brand-coral p-1 transition">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </Link>
@@ -159,12 +182,21 @@ export default function Dashboard() {
             sess.length ? (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 {sess.map(x => (
-                  <Link key={x.id} className="bg-white p-6 rounded-2xl border border-brand-line shadow-sm hover:border-brand-teal transition group block" to={'/session/' + x.id}>
+                  <Link key={x.id} className="bg-white p-6 rounded-2xl border border-brand-line shadow-sm hover:border-brand-teal transition group block relative" to={'/session/' + x.id}>
                     <div className="flex items-center justify-between mb-3">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${x.status === 'LIVE' ? 'bg-red-100 text-brand-coral animate-pulse' : x.status === 'PROCESSING' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-brand-teal'}`}>
                         {x.status}
                       </span>
-                      <ChevronRight className="w-5 h-5 text-brand-mut group-hover:translate-x-1 transition-transform" />
+                      <div className="flex items-center gap-1">
+                        <button
+                          title="Delete lecture"
+                          onClick={e => delSession(e, x.id)}
+                          className="text-brand-mut hover:text-brand-coral p-1.5 rounded-lg hover:bg-red-50 transition z-10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <ChevronRight className="w-5 h-5 text-brand-mut group-hover:translate-x-1 transition-transform" />
+                      </div>
                     </div>
                     <h3 className="text-lg font-bold text-brand-deep mb-1 group-hover:text-brand-teal transition">{x.title}</h3>
                     <p className="text-xs text-brand-mut flex items-center gap-1.5 mt-2"><Clock className="w-3.5 h-3.5" /> {new Date(x.startedAt).toLocaleString()}</p>
