@@ -56,7 +56,7 @@ export default function Landing() {
             NoteMate turns your live lecture, even in Hinglish, into clean, structured notes while the teacher is still talking. Ask questions mid-class and revise later from flashcards and quizzes.
           </p>
           <div className="flex flex-wrap items-center gap-4">
-            <Link className="bg-brand-mark text-brand-ink hover:bg-brand-mark/90 font-bold px-6 py-3.5 rounded-2xl shadow-xl transition transform hover:-translate-y-0.5 flex items-center gap-2" to="/signup">
+            <Link className="bg-brand-mark text-brand-ink hover:bg-brand-mark/90 font-bold px-6 py-3.5 rounded-2xl shadow-xl transition transform hover:-translate-y-0.5 flex items-center gap-2" to={user ? "/app" : "/signup"}>
               Start your first lecture <ArrowRight className="w-4 h-4" />
             </Link>
             <a className="border border-white/30 hover:border-white text-white font-semibold px-6 py-3.5 rounded-2xl transition flex items-center gap-2 hover:bg-white/5" href="#how">
@@ -94,7 +94,7 @@ export default function Landing() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {steps.map(([t, d], i) => (
             <div key={t} className="bg-white p-6 rounded-2xl border border-brand-line shadow-sm relative group hover:border-brand-teal transition">
-              <div className="text-brand-teal font-extrabold text-3xl mb-3 font-heading">0{i+1}</div>
+              <div className="text-brand-teal font-extrabold text-3xl mb-3 font-heading">0{i + 1}</div>
               <b className="block text-lg font-bold text-brand-deep mb-2">{t}</b>
               <p className="text-brand-mut text-sm leading-relaxed">{d}</p>
             </div>
