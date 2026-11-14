@@ -1,21 +1,111 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, wsUrl } from '../api.js';
 import { Md, toast } from '../ui.jsx';
-import { Mic, MicOff, Send, PhoneOff, MessageSquare, BookOpen, FileText, Sparkles, Clock, Loader2 } from 'lucide-react';
+import { Mic, MicOff, Send, PhoneOff, MessageSquare, BookOpen, FileText, Sparkles, Clock, ShieldAlert, Loader2, AlertTriangle } from 'lucide-react';
 
 const mmss = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 
+// Reusable Confirm Modal matching your requested design
+function ConfirmModal({ title, message, confirmLabel, onConfirm, onClose, loading }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-brand-deep/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-brand-line text-center space-y-5">
+        <div className="w-14 h-14 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+          <AlertTriangle className="w-7 h-7" />
+        </div>
+        <div className="space-y-1.5">
+          <h3 className="text-xl font-bold text-brand-deep">{title}</h3>
+          <p className="text-sm text-brand-mut leading-relaxed">{message}</p>
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 bg-brand-bg hover:bg-brand-line/50 text-brand-deep font-bold py-3 px-4 rounded-xl text-sm transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-xl text-sm shadow transition flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Live({ d, back, onEnded }) {
+  // State for permission gating
+  const [micGranted, setMicGranted] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [permissionError, setPermissionError] = useState(false);
+
+  // End session modal state & loading
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [endingLoading, setEndingLoading] = useState(false);
+
+  // Main session states
   const [tr, setTr] = useState(d.transcriptChunks), [part, setPart] = useState(''), [notes, setNotes] = useState(() => new Map(d.noteChunks.map(n => [n.id, n]))), [fresh, setFresh] = useState(new Set());
   const [msgs, setMsgs] = useState([{ r: 'a', t: 'Ask anything about this lecture or your earlier ones.' }]), [q, setQ] = useState(''), [typed, setTyped] = useState('');
   const [status, setStatus] = useState('Connecting'), [secs, setSecs] = useState(0), [mic, setMic] = useState(false), [tab, setTab] = useState('c2');
+
   const ws = useRef(null), micRef = useRef(null), alive = useRef(true), trEnd = useRef(), qaEnd = useRef();
 
-  useEffect(() => { trEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [tr]);
-  useEffect(() => { qaEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs]);
-  useEffect(() => { const t0 = new Date(d.startedAt); const i = setInterval(() => setSecs(Math.max(0, Math.floor((Date.now() - t0) / 1000))), 1000); return () => clearInterval(i) }, [d.startedAt]);
+  // Request Microphone Permission and initialize audio stream
+  async function requestMicAndStart() {
+    setRequesting(true);
+    setPermissionError(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+      });
 
+      const ac = new AudioContext(), src = ac.createMediaStreamSource(stream), pr = ac.createScriptProcessor(4096, 1, 1), ratio = ac.sampleRate / 16000;
+      pr.onaudioprocess = e => {
+        if (ws.current?.readyState !== 1) return;
+        const x = e.inputBuffer.getChannelData(0), n = Math.floor(x.length / ratio), o = new Int16Array(n);
+        for (let i = 0; i < n; i++) { const v = Math.max(-1, Math.min(1, x[Math.floor(i * ratio)])); o[i] = v < 0 ? v * 32768 : v * 32767 }
+        ws.current.send(o.buffer);
+      };
+      src.connect(pr); pr.connect(ac.destination);
+
+      micRef.current = {
+        stop() {
+          stream.getTracks().forEach(t => t.stop());
+          pr.disconnect();
+          ac.close();
+          micRef.current = null;
+          setMic(false);
+        }
+      };
+
+      setMic(true);
+      setMicGranted(true);
+    } catch (err) {
+      console.error(err);
+      setPermissionError(true);
+      toast('Microphone permission is required to participate in this live session.');
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  // Timer only runs AFTER mic permission is granted
   useEffect(() => {
+    if (!micGranted) return;
+    const t0 = Date.now();
+    const i = setInterval(() => setSecs(Math.max(0, Math.floor((Date.now() - t0) / 1000))), 1000);
+    return () => clearInterval(i);
+  }, [micGranted]);
+
+  // WebSocket connection only active after permission is granted
+  useEffect(() => {
+    if (!micGranted) return;
     alive.current = true;
     const connect = () => {
       const s = new WebSocket(wsUrl(d.id));
@@ -33,39 +123,81 @@ export default function Live({ d, back, onEnded }) {
     };
     connect();
     return () => { alive.current = false; ws.current?.close(); micRef.current?.stop() }
-  }, [d.id]);
+  }, [micGranted, d.id]);
+
+  useEffect(() => { trEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [tr]);
+  useEffect(() => { qaEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs]);
 
   const send = o => ws.current?.readyState === 1 ? (ws.current.send(JSON.stringify(o)), true) : (toast('Not connected yet'), false);
   const ask = () => { const v = q.trim(); if (v && send({ type: 'QUESTION', question: v })) { setMsgs(a => [...a, { r: 'u', t: v }, { r: 'a', t: 'Thinking…' }]); setQ('') } };
   const addLine = () => { const v = typed.trim(); if (v && send({ type: 'TRANSCRIPT_TEXT', text: v })) setTyped('') };
 
   async function toggleMic() {
-    if (micRef.current) { micRef.current.stop(); return }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-      const ac = new AudioContext(), src = ac.createMediaStreamSource(stream), pr = ac.createScriptProcessor(4096, 1, 1), ratio = ac.sampleRate / 16000;
-      pr.onaudioprocess = e => {
-        if (ws.current?.readyState !== 1) return;
-        const x = e.inputBuffer.getChannelData(0), n = Math.floor(x.length / ratio), o = new Int16Array(n);
-        for (let i = 0; i < n; i++) { const v = Math.max(-1, Math.min(1, x[Math.floor(i * ratio)])); o[i] = v < 0 ? v * 32768 : v * 32767 }
-        ws.current.send(o.buffer);
-      };
-      src.connect(pr); pr.connect(ac.destination);
-      micRef.current = { stop() { stream.getTracks().forEach(t => t.stop()); pr.disconnect(); ac.close(); micRef.current = null; setMic(false) } };
-      setMic(true);
-    } catch { toast('Microphone permission is needed to stream audio.') }
+    if (!micRef.current) {
+      requestMicAndStart();
+    } else {
+      micRef.current?.stop();
+    }
   }
 
-  async function end() {
-    if (!confirm('End this lecture? Notes will be finalized and indexed.')) return;
-    alive.current = false; ws.current?.close(); micRef.current?.stop();
-    try { await api(`/api/sessions/${d.id}/end`, { method: 'POST' }) } catch (e) { toast(e.message) }
-    onEnded();
+  async function executeEndSession() {
+    setEndingLoading(true);
+    alive.current = false;
+    ws.current?.close();
+    micRef.current?.stop();
+    try {
+      await api(`/api/sessions/${d.id}/end`, { method: 'POST' });
+      onEnded();
+    } catch (e) {
+      toast(e.message);
+      setEndingLoading(false);
+      setShowEndModal(false);
+    }
   }
 
   const sorted = [...notes.values()].sort((a, b) => a.sortOrder - b.sortOrder);
   const show = id => tab === id ? ' flex' : ' hidden lg:flex';
 
+  // --- SCREEN FREEZE / PERMISSION GATE OVERLAY ---
+  if (!micGranted) {
+    return (
+      <div className="fixed inset-0 z-50 bg-brand-deep/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl border border-brand-line text-center space-y-6 animate-in fade-in zoom-in duration-300">
+          <div className="w-16 h-16 bg-brand-coral/10 text-brand-coral rounded-2xl flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold text-brand-deep">Microphone Access Required</h2>
+            <p className="text-sm text-brand-mut leading-relaxed">
+              To join <span className="font-semibold text-brand-ink">"{d.title}"</span> and stream live audio notes, microphone permission is mandatory.
+            </p>
+          </div>
+
+          {permissionError && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl font-medium">
+              Permission denied or unavailable. Please check your browser settings and try again.
+            </div>
+          )}
+
+          <div className="space-y-3 pt-2">
+            <button
+              onClick={requestMicAndStart}
+              disabled={requesting}
+              className="w-full bg-brand-teal hover:bg-brand-deep text-white font-bold py-3.5 px-6 rounded-xl shadow transition flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+            >
+              {requesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+              {requesting ? 'Requesting Permission...' : 'Allow Microphone & Start Session'}
+            </button>
+
+            {back}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN LIVE SESSION UI ---
   return (
     <div className="min-h-screen bg-brand-bg flex flex-col h-screen overflow-hidden">
       {/* Top Bar */}
@@ -80,9 +212,9 @@ export default function Live({ d, back, onEnded }) {
           <Clock className="w-3.5 h-3.5 text-brand-mark" /> {mmss(secs)}
         </div>
         <button onClick={toggleMic} className={`font-bold px-4 py-2 rounded-xl text-sm shadow transition flex items-center gap-1.5 ${mic ? 'bg-brand-coral text-white animate-pulse' : 'bg-brand-mark text-brand-ink hover:bg-brand-mark/90'}`}>
-          {mic ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />} {mic ? 'Mute mic' : 'Start mic'}
+          {mic ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />} {mic ? 'Mute mic' : 'Unmute mic'}
         </button>
-        <button onClick={end} className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-sm shadow transition flex items-center gap-1.5">
+        <button onClick={() => setShowEndModal(true)} className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-sm shadow transition flex items-center gap-1.5">
           <PhoneOff className="w-4 h-4" /> End session
         </button>
       </div>
@@ -121,12 +253,12 @@ export default function Live({ d, back, onEnded }) {
             <div ref={trEnd} />
           </div>
           <div className="p-3 border-t border-brand-line bg-white flex gap-2">
-            <input 
-              value={typed} 
-              onChange={e => setTyped(e.target.value)} 
-              onKeyDown={e => e.key === 'Enter' && addLine()} 
-              placeholder="Type a line to test..." 
-              className="flex-1 px-3 py-2 rounded-xl border border-brand-line text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal" 
+            <input
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addLine()}
+              placeholder="Type a line to test..."
+              className="flex-1 px-3 py-2 rounded-xl border border-brand-line text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
             />
             <button onClick={addLine} className="bg-brand-teal hover:bg-brand-deep text-white font-bold px-4 py-2 rounded-xl text-sm transition">
               Add
@@ -168,12 +300,12 @@ export default function Live({ d, back, onEnded }) {
             <div ref={qaEnd} />
           </div>
           <div className="p-3 border-t border-brand-line bg-white flex gap-2">
-            <input 
-              value={q} 
-              onChange={e => setQ(e.target.value)} 
-              onKeyDown={e => e.key === 'Enter' && ask()} 
-              placeholder="Ask about this lecture..." 
-              className="flex-1 px-3 py-2 rounded-xl border border-brand-line text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal" 
+            <input
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && ask()}
+              placeholder="Ask about this lecture..."
+              className="flex-1 px-3 py-2 rounded-xl border border-brand-line text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
             />
             <button onClick={ask} className="bg-brand-teal hover:bg-brand-deep text-white font-bold px-4 py-2 rounded-xl text-sm transition flex items-center justify-center">
               <Send className="w-4 h-4" />
@@ -181,6 +313,18 @@ export default function Live({ d, back, onEnded }) {
           </div>
         </section>
       </div>
+
+      {/* End Session Confirmation Modal */}
+      {showEndModal && (
+        <ConfirmModal
+          title="End this session?"
+          message="Are you sure you want to end this lecture? Notes will be finalized and indexed."
+          confirmLabel="End session"
+          onConfirm={executeEndSession}
+          onClose={() => setShowEndModal(false)}
+          loading={endingLoading}
+        />
+      )}
     </div>
   );
 }
