@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #F2F6F4;
+    --ink: #0F2A2E;
+    --mut: #5B7276;
+    --teal: #0F766E;
+    --deep: #0B3C3F;
+    --mark: #F4C84A;
+    --coral: #E0573B;
+    --line: #D5E1DD;
+    --card: #FFFFFF;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: 'Figtree', system-ui, -apple-system, sans-serif;
+  }
+  h1, h2, h3, .font-heading {
+    font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.95); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
